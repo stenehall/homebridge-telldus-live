@@ -1,264 +1,220 @@
 var types = require("hap-nodejs/accessories/types.js");
 var TellduAPI = require("telldus-live");
+var Characteristic = require("hap-nodejs").Characteristic;
+var Service = require("hap-nodejs").Service;
 
 function TelldusLivePlatform(log, config) {
-    var that = this;
-    that.log = log;
+  var that = this;
+  that.log = log;
 
-    that.isLoggedIn = false;
+  that.isLoggedIn = false;
 
-    // Login to Telldus Live!
-    that.cloud = new TellduAPI.TelldusAPI({publicKey: config["public_key"], privateKey: config["private_key"]})
-        .login(config["token"], config["token_secret"], function(err, user) {
-            if (!!err) that.log("Login error: " + err.message);
-            that.log("User logged in: " + user.firstname + " " + user.lastname + ", " + user.email);
-            that.isLoggedIn = true;
-        }
+  // Login to Telldus Live!
+  that.cloud = new TellduAPI.TelldusAPI({publicKey: config["public_key"], privateKey: config["private_key"]})
+    .login(config["token"], config["token_secret"], function(err, user) {
+      if (!!err) that.log("Login error: " + err.message);
+      that.log("User logged in: " + user.firstname + " " + user.lastname + ", " + user.email);
+      that.isLoggedIn = true;
+    }
     );
 }
 
 TelldusLivePlatform.prototype = {
 
-    accessories: function(callback) {
-        var that = this;
+  accessories: function(callback) {
+    var that = this;
 
-        that.log("Fetching devices...");
+    that.log("Fetching devices...");
+    var foundAccessories = [];
+    var devices = [];
+    var sensors = [];
+    that.cloud.getDevices(function(devicesErr, devices) {
+      that.cloud.getSensors(function(sensorsErr, sensors) {
+        if (!!devicesErr && !!sensorsErr) return that.log('getDevices: ' + devicesErr.message  + ' getSensors: ' + sensorsErr.message);
 
-        that.cloud.getDevices(function(err, devices) {
+        // Clean non device
+        for (var i = 0; i < devices.length; i++) {
+          if (devices[i].type != 'device') {
+            devices.splice(i, 1);
+          }
+        }
 
-            if (!!err) return that.log('getDevices: ' + err.message);
+        for (var i = 0; i < devices.length; i++) {
+          if (devices[i].type === 'device') {
+            TelldusLiveAccessory.create(that.log, devices[i], that.cloud, function(err, accessory) {
+              if (!!err) that.log("Couldn't load device info");
+              foundAccessories.push(accessory);
+              if (foundAccessories.length >= (devices.length + sensors.length)) {
+                callback(foundAccessories);
+              }
+            });
+          }
+        }
 
-            var foundAccessories = [];
+        // Clean non device
+        for (var i = 0; i < sensors.length; i++) {
+          // We're currently only supporting temperaturehumidity sensors;
+          if (sensors[i].model !== 'temperaturehumidity') {
+            sensors.splice(i, 1);
+          } else {
+            sensors[i].type = sensors[i].model;
+            sensors[i].model = sensors[i].model+':unknown';
+          }
+        }
 
-            // Clean non device
-            for (var i = 0; i < devices.length; i++) {
-                if (devices[i].type != 'device') {
-                    devices.splice(i, 1);
-                }
+        for (var i=0; i < sensors.length; i++) {
+          TelldusLiveAccessory.create(that.log, sensors[i], that.cloud, function(err, accessory) {
+            if (!!err) that.log("Couldn't load device info");
+            foundAccessories.push(accessory);
+            if (foundAccessories.length >= (devices.length + sensors.length)) {
+              callback(foundAccessories);
             }
-
-            for (var i = 0; i < devices.length; i++) {
-                if (devices[i].type === 'device') {
-                    TelldusLiveAccessory.create(that.log, devices[i], that.cloud, function(err, accessory) {
-                        if (!!err) that.log("Couldn't load device info");
-                        foundAccessories.push(accessory);
-                        if (foundAccessories.length >= devices.length) {
-                            callback(foundAccessories);
-                        }
-                    });
-                }
-            }
-
-        });
-    }
+          });
+        }
+      });
+    });
+  }
 };
 
 var TelldusLiveAccessory = function TelldusLiveAccessory(log, cloud, device) {
 
-    this.log   = log;
-    this.cloud = cloud;
+  this.log   = log;
+  this.cloud = cloud;
 
-    var m = device.model.split(':');
+  var m = device.model.split(':');
 
-    // Set accessory info
-    this.device         = device;
-    this.id             = device.id;
-    this.name           = device.name;
-    this.manufacturer   = m[1];
-    this.model          = m[0];
-    this.state          = device.state;
-    this.stateValue     = device.stateValue;
-    this.status         = device.status;
+  // Set accessory info
+  this.device         = device;
+  this.id             = device.id;
+  this.name           = device.name;
+  this.manufacturer   = m[1];
+  this.model          = m[0];
+  this.state          = device.state;
+  this.stateValue     = device.stateValue;
+  this.status         = device.status;
+  this.value          = device.status === 'on' ? 1 : 0;
 };
 
 TelldusLiveAccessory.create = function (log, device, cloud, callback) {
 
-    cloud.getDeviceInfo(device, function(err, device) {
-
-        if (!!err) that.log("Couldn't load device info");
-
-        callback(err, new TelldusLiveAccessory(log, cloud, device));
+  if (device.type == 'temperaturehumidity') {
+    cloud.getSensorInfo(device, function(err, fetchedDevice) {
+      if (!!err) that.log("Couldn't load device info");
+      fetchedDevice.type = device.type;
+      fetchedDevice.model = device.model;
+      callback(err, new TelldusLiveAccessory(log, cloud, fetchedDevice));
     });
+  } else {
+    cloud.getDeviceInfo(device, function(err, device) {
+      if (!!err) that.log("Couldn't load device info");
+      callback(err, new TelldusLiveAccessory(log, cloud, device));
+    });
+  }
 };
 
 TelldusLiveAccessory.prototype = {
 
-    dimmerValue: function() {
-
-        if (this.state === 1) {
-            return 100;
-        }
-
-        if (this.state === 16 && this.stateValue != "unde") {
-            return parseInt(this.stateValue * 100 / 255);
-        }
-
-        return 0;
-    },
-
-    informationCharacteristics: function() {
-        var that = this;
-
-        informationCharacteristics = [
-            {
-                cType: types.NAME_CTYPE,
-                onUpdate: null,
-                perms: ["pr"],
-                format: "string",
-                initialValue: that.name,
-                supportEvents: false,
-                supportBonjour: false,
-                manfDescription: "Name of the accessory",
-                designedMaxLength: 255
-            },{
-                cType: types.MANUFACTURER_CTYPE,
-                onUpdate: null,
-                perms: ["pr"],
-                format: "string",
-                initialValue: that.manufacturer,
-                supportEvents: false,
-                supportBonjour: false,
-                manfDescription: "Manufacturer",
-                designedMaxLength: 255
-            },{
-                cType: types.MODEL_CTYPE,
-                onUpdate: null,
-                perms: ["pr"],
-                format: "string",
-                initialValue: that.model,
-                supportEvents: false,
-                supportBonjour: false,
-                manfDescription: "Model",
-                designedMaxLength: 255
-            },{
-                cType: types.SERIAL_NUMBER_CTYPE,
-                onUpdate: null,
-                perms: ["pr"],
-                format: "string",
-                initialValue: "A1S2NASF88EW",
-                supportEvents: false,
-                supportBonjour: false,
-                manfDescription: "SN",
-                designedMaxLength: 255
-            },{
-                cType: types.IDENTIFY_CTYPE,
-                onUpdate: function () {
-                    that.cloud.onOffDevice(that.device, true, function(err, result) {
-                        if (!!err) that.log("Error: " + err.message);
-                        that.cloud.onOffDevice(that.device, false, function(err, result) {
-                            if (!!err) that.log("Error: " + err.message);
-                            that.cloud.onOffDevice(that.device, true, function(err, result) {
-                                if (!!err) that.log("Error: " + err.message);
-                                that.cloud.onOffDevice(that.device, false, function(err, result) {
-                                    if (!!err) that.log("Error: " + err.message);
-                                    that.cloud.onOffDevice(that.device, true, function(err, result) {
-                                        if (!!err) that.log("Error: " + err.message);
-                                    })
-                                })
-                            })
-                        })
-                    })
-                },
-                perms: ["pw"],
-                format: "bool",
-                initialValue: false,
-                supportEvents: false,
-                supportBonjour: false,
-                manfDescription: "Identify Accessory",
-                designedMaxLength: 1
-            }
-        ];
-        return informationCharacteristics;
-    },
-
-    controlCharacteristics: function() {
-        var that = this;
-
-        cTypes = [{
-            cType: types.NAME_CTYPE,
-            onUpdate: null,
-            perms: ["pr"],
-            format: "string",
-            initialValue: that.name,
-            supportEvents: true,
-            supportBonjour: false,
-            manfDescription: "Name of service",
-            designedMaxLength: 255
-        }]
-
-        cTypes.push({
-            cType: types.POWER_STATE_CTYPE,
-            onUpdate: function(value) {
-                if (value == 1) {
-                    that.cloud.onOffDevice(that.device, value, function(err, result) {
-                        if (!!err) {
-                            that.log("Error: " + err.message)
-                        } else {
-                            that.log(that.name + " - Updated power state: " + (value === true ? 'ON' : 'OFF'));
-                        }
-                    });
-                } else {
-                    that.cloud.onOffDevice(that.device, value, function(err, result) {
-                        if (!!err) {
-                            that.log("Error: " + err.message)
-                        } else {
-                            that.log(that.name + " - Updated power state: " + (value === true ? 'ON' : 'OFF'));
-                        }
-                    });
-                }
-            },
-            perms: ["pw","pr","ev"],
-            format: "bool",
-            initialValue: (that.state != 2 && (that.state === 16 && that.stateValue != "0")) ? 1 : 0,
-            supportEvents: true,
-            supportBonjour: false,
-            manfDescription: "Change the power state",
-            designedMaxLength: 1
-        })
-
-        if (that.model === "selflearning-dimmer") {
-            cTypes.push({
-                cType: types.BRIGHTNESS_CTYPE,
-                onUpdate: function (value) {
-                    that.cloud.dimDevice(that.device, (255 * (value / 100)), function (err, result) {
-                        if (!!err) {
-                            that.log("Error: " + err.message);
-                        } else {
-                            that.log(that.name + " - Updated brightness: " + value);
-                        }
-                    });
-                },
-                perms: ["pw", "pr", "ev"],
-                format: "int",
-                initialValue: that.dimmerValue(),
-                supportEvents: true,
-                supportBonjour: false,
-                manfDescription: "Adjust Brightness of Light",
-                designedMinValue: 0,
-                designedMaxValue: 100,
-                designedMinStep: 1,
-                unit: "%"
-            })
-        }
-
-        return cTypes
-    },
-
-    getServices: function() {
-
-        var services = [
-            {
-                sType: types.ACCESSORY_INFORMATION_STYPE,
-                characteristics: this.informationCharacteristics()
-            },
-            {
-                sType: types.LIGHTBULB_STYPE,
-                characteristics: this.controlCharacteristics()
-            }
-        ];
-
-        return services;
+  dimmerValue: function() {
+    if (this.device.state === 1) {
+      return 100;
     }
+    if (this.device.state == 16 && this.device.statevalue != "unde") {
+      return parseInt(this.device.statevalue * 100 / 255);
+    }
+
+    return 0;
+  },
+
+  getServices: function() {
+    var informationService = new Service.AccessoryInformation();
+    var objectService;
+    var that = this;
+
+    if (that.device.type !== 'temperaturehumidity') {
+      informationService
+        .setCharacteristic(Characteristic.Manufacturer, that.manufacturer)
+        .setCharacteristic(Characteristic.Model, that.model)
+        .setCharacteristic(Characteristic.SerialNumber, 'A1S2NASF88EW');
+
+      objectService = new Service.Lightbulb();
+      objectService.getCharacteristic(Characteristic.On)
+        .on('set', function(value, callback) {
+          that.cloud.onOffDevice(that.device, value, function(err, result) {
+            if (!!err) {
+              that.log("Error: " + err.message)
+            } else {
+              that.log(that.name + " - Updated power state: " + (value == 1 ? 'ON' : 'OFF'));
+              callback();
+            }
+          });
+        });
+
+      objectService
+        .getCharacteristic(Characteristic.On)
+        .on('get', function(callback) {
+          that.cloud.getDeviceInfo(that.device, function(err, device) {
+            if (!!err) that.log("Couldn't load device info");
+
+            that.device = device;
+            callback(null, that.device.status === 'on' ? 1 : 0);
+          });
+        });
+
+      if (that.model === "selflearning-dimmer") {
+        objectService
+          .addCharacteristic(new Characteristic.Brightness())
+          .on('get', function(callback) {
+            that.cloud.getDeviceInfo(that.device, function(err, device) {
+              if (!!err) that.log("Couldn't load device info");
+
+              that.device = device;
+              var value = that.dimmerValue();
+              callback(null, value);
+            });
+          });
+
+        objectService
+          .getCharacteristic(Characteristic.Brightness)
+          .on('set', function(value, callback) {
+            that.cloud.dimDevice(that.device, (255 * (value / 100)), function (err, result) {
+              if (!!err) {
+                that.log("Error: " + err.message);
+              } else {
+                that.log(that.name + " - Updated brightness: " + value);
+              }
+            });
+            callback();
+          });
+      }
+    }
+
+    if (this.device.type === 'temperaturehumidity') {
+      var that = this;
+      informationService
+        .setCharacteristic(Characteristic.Manufacturer, "Temperature Manufacturer")
+        .setCharacteristic(Characteristic.Model, "Temperature Thermometer")
+        .setCharacteristic(Characteristic.SerialNumber, "Temperature Serial Number");
+
+      var objectService = new Service.TemperatureSensor();
+      objectService
+        .getCharacteristic(Characteristic.CurrentTemperature)
+        .setProps({
+          minValue: -100,
+          value: 10
+        })
+      .on('get', function(callback) {
+        that.cloud.getSensorInfo(that.device, function(err, sensor) {
+          if(err) {
+            return;
+          }
+          var tmp = Number(sensor.data[0].value);
+          that.log("Current temperature: " + tmp);
+          callback(null, tmp);
+        });
+      });
+    }
+    return [informationService, objectService];
+  }
 };
 
 module.exports.platform = TelldusLivePlatform;
