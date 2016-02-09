@@ -93,6 +93,10 @@ var TelldusLiveAccessory = function TelldusLiveAccessory(log, cloud, device) {
   this.stateValue     = device.stateValue;
   this.status         = device.status;
   this.value          = device.status === 'on' ? 1 : 0;
+
+  if (this.manufacturer === 'proove-pir') {
+    this.device.type = 'motion'
+  }
 };
 
 TelldusLiveAccessory.create = function (log, device, cloud, callback) {
@@ -130,7 +134,8 @@ TelldusLiveAccessory.prototype = {
     var objectService;
     var that = this;
 
-    if (that.device.type !== 'temperaturehumidity') {
+    if (that.device.type !== 'temperaturehumidity' &&
+        that.device.type !== 'motion') {
       informationService
         .setCharacteristic(Characteristic.Manufacturer, that.manufacturer)
         .setCharacteristic(Characteristic.Model, that.model)
@@ -212,6 +217,21 @@ TelldusLiveAccessory.prototype = {
           callback(null, tmp);
         });
       });
+    } else if (this.device.type === 'motion') {
+      var motionSensorService = new Service.MotionSensor(this.name);
+
+      motionSensorService
+        .getCharacteristic(Characteristic.MotionDetected)
+        .on('get', function(callback) {
+          that.cloud.getDeviceInfo(that.device, function(err, device) {
+            if (!!err) that.log("Couldn't load device info");
+
+            that.device = device;
+            that.device.type == 'motion'
+            callback(null, that.device.status === 'on' ? 1 : 0);
+          });
+        });
+      return [motionSensorService];
     }
     return [informationService, objectService];
   }
