@@ -196,27 +196,54 @@ TelldusLiveAccessory.prototype = {
     if (this.device.type === 'temperaturehumidity') {
       var that = this;
       informationService
-        .setCharacteristic(Characteristic.Manufacturer, "Temperature Manufacturer")
-        .setCharacteristic(Characteristic.Model, "Temperature Thermometer")
-        .setCharacteristic(Characteristic.SerialNumber, "Temperature Serial Number");
+        .setCharacteristic(Characteristic.Manufacturer,
+          "Temperature and Humidity Manufacturer")
+        .setCharacteristic(Characteristic.Model, "
+          Temperature and Humidity Thermometer")
+        .setCharacteristic(Characteristic.SerialNumber,
+          "Temperature and Humidity Serial Number");
 
       var objectService = new Service.TemperatureSensor();
-      objectService
-        .getCharacteristic(Characteristic.CurrentTemperature)
-        .setProps({
-          minValue: -100,
-          value: 10
-        })
+      objectService.addCharacteristic(Characteristic.CurrentRelativeHumidity)
+
+      objectService.getCharacteristic(Characteristic.CurrentTemperature)
+      .setProps({
+        minValue: -100,
+        value: 10
+      })
+
+      objectService.getCharacteristic(Characteristic.CurrentTemperature)
       .on('get', function(callback) {
         that.cloud.getSensorInfo(that.device, function(err, sensor) {
-          if(err) {
-            return;
-          }
+          if(err) return;
+
           var tmp = Number(sensor.data[0].value);
           that.log("Current temperature: " + tmp);
           callback(null, tmp);
         });
       });
+
+      objectService.getCharacteristic(Characteristic.CurrentRelativeHumidity)
+      .setProps({
+        format: Characteristic.Formats.FLOAT,
+        unit: Characteristic.Units.PERCENTAGE,
+        maxValue: 100,
+        minValue: 0,
+        minStep: 1,
+        perms: [Characteristic.Perms.READ, Characteristic.Perms.NOTIFY]
+      })
+
+      objectService.getCharacteristic(Characteristic.CurrentRelativeHumidity)
+      .on('get', function(callback) {
+        that.cloud.getSensorInfo(that.device, function(err, sensor) {
+          if(err) return;
+
+          var tmp = Number(sensor.data[1].value);
+          that.log("Current humidity: " + tmp);
+          callback(null, tmp);
+        });
+      });
+
     } else if (this.device.type === 'motion') {
       var motionSensorService = new Service.MotionSensor(this.name);
 
