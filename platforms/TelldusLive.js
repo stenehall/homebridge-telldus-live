@@ -54,15 +54,15 @@ TelldusLivePlatform.prototype = {
         // Clean non device
         for (var i = 0; i < sensors.length; i++) {
           // We're currently only supporting temperaturehumidity sensors;
-          if (sensors[i].model !== 'temperaturehumidity') {
+          if (sensors[i].model !== 'temperaturehumidity' || sensors[i].name === null) {
             sensors.splice(i, 1);
-          } else {
-            sensors[i].type = sensors[i].model;
-            sensors[i].model = sensors[i].model+':unknown';
           }
         }
 
         for (var i=0; i < sensors.length; i++) {
+          sensors[i].type = sensors[i].model;
+          sensors[i].model = sensors[i].model+':unknown';
+
           TelldusLiveAccessory.create(that.log, sensors[i], that.cloud, function(err, accessory) {
             if (!!err) that.log("Couldn't load device info");
             foundAccessories.push(accessory);
@@ -198,8 +198,8 @@ TelldusLiveAccessory.prototype = {
       informationService
         .setCharacteristic(Characteristic.Manufacturer,
           "Temperature and Humidity Manufacturer")
-        .setCharacteristic(Characteristic.Model, "
-          Temperature and Humidity Thermometer")
+        .setCharacteristic(Characteristic.Model,
+          "Temperature and Humidity Thermometer")
         .setCharacteristic(Characteristic.SerialNumber,
           "Temperature and Humidity Serial Number");
 
